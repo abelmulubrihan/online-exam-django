@@ -1,33 +1,42 @@
 from django.shortcuts import render, get_object_or_404, redirect
-from .models import Lesson, Submission, Choice
-from django.contrib import messages
+from .models import Course, Lesson, Submission, Choice
 
-
-def submit(request, lesson_id):
-    lesson = get_object_or_404(Lesson, pk=lesson_id)
+def submit(request, course_id):
+    course = get_object_or_404(Course, pk=course_id)
+    lesson = course.lesson_set.first()  # Adjust if multiple lessons
     if request.method == 'POST':
+        learner = request.user.learner
+        submission = Submission.objects.create(enrollment=learner)
         selected_choices = request.POST.getlist('choices')
-        choices = Choice.objects.filter(id__in=selected_choices)
-        submission = Submission.objects.create(lesson=lesson)
-        submission.choices.set(choices)
-        return redirect('show_exam_result', lesson_id=lesson_id)
-    return render(request, 'onlinecourse/course_details_bootstrap.html', {'lesson': lesson})
+        for choice_id in selected_choices:
+            submission.choices.add(Choice.objects.get(id=choice_id))
+        return redirect('show_exam_result', course_id=course.id, submission_id=submission.id)
 
+    context = {'course': course, 'lesson': lesson}
+    return render(request, 'onlinecourse/exam_bootstrap.html', context)
 
-def show_exam_result(request, lesson_id):
-    lesson = get_object_or_404(Lesson, pk=lesson_id)
-    submission = Submission.objects.filter(lesson=lesson).last()
-    if not submission:
-        messages.error(request, 'No submission found.')
-        return redirect('submit', lesson_id=lesson_id)
-    score = 0
-    total_questions = lesson.question_set.count()
-    for question in lesson.question_set.all():
-        question_score = question.get_score(submission.choices.all())
-        score += question_score
-    score_percentage = (score / total_questions) * 100 if total_questions > 0 else 0
-    return render(request, 'onlinecourse/exam_result.html', {
-        'lesson': lesson,
-        'score': score_percentage,
-        'total_questions': total_questions
-    })
+def show_exam_result(request, course_id, submission_id):
+    course = get_object_or_404(Course, pk=course_id)
+    submission = get_object_or_404(Submission, pk=submission_id)
+
+    total_score = 0
+    possible_score = 0
+    selected_ids = []
+
+    for lesson in course.lesson_set.all():
+        for question in lesson.question_set.all():
+            possible_score += 1
+            choices = submission.choices.filter(question=question)
+            selected_ids.extend([c.id for c in choices])
+            if question.is_get_score([c.id for c in choices]):
+                total_score += 1
+
+    grade = f"{total_score}/{possible_score}"
+
+    context = {
+        "course": course,
+        "selected_ids": selected_ids,
+        "grade": grade,
+        "possible": possible_score
+    }
+    return render(request, "onlinecourse/exam_result_bootstrap.html", context)
